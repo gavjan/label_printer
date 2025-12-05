@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+
+  "name": "Label Printer",
+  "description": "Generate and print labels for topsale.am products ",
+  "version": "1.0",
+  "content_scripts": [
+    {
+        "matches": ["https://topsale.am/product/*"],
+        "js": ["/popup.js"]
+    }
+],
+
+  "action": {
+    "default_icon": "icon.png",
+    "default_title": "Print label"
+  },
+  "host_permissions": [
+    "*://*.example.org/"
+  ],
+  "permissions": [
+    "activeTab",
+    "storage"
+  ]
+}
