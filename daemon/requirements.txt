@@ -1,0 +1,7 @@
+beautifulsoup4
+svglib
+reportlab
+Pillow
+python-barcode
+fpdf
+svglib
