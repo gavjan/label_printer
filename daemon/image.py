@@ -1,27 +1,63 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: 'image.py'
-# Bytecode version: 3.11a7e (3495)
-# Source timestamp: 1970-01-01 00:00:00 UTC (0)
+"""
+Label image generation module.
+Creates product label images with barcodes, prices, and product information.
+"""
 
 import textwrap
 from PIL import Image, ImageFont, ImageDraw
 from barcode import Code128
 from barcode.writer import ImageWriter
+
+
 def read_image(path, resize=None):
+    """
+    Load an image from disk and optionally resize it.
+    
+    Args:
+        path: Path to the image file
+        resize: Optional size to resize the image to (width/height in pixels)
+    
+    Returns:
+        PIL Image object
+    """
     try:
-        opened_img = Image.open(path)
+        img = Image.open(path)
         if resize:
-            opened_img = opened_img.resize((resize, resize))
-        if path[(-4):] == '.png':
-            opened_img = opened_img.convert('RGBA')
-        return opened_img
+            img = img.resize((resize, resize))
+        if path.endswith('.png'):
+            img = img.convert('RGBA')
+        return img
     except FileNotFoundError:
-        print('[ERROR] file:', path, 'not found')
+        print(f'[ERROR] file: {path} not found')
         exit(1)
+
+
 def draw_text(draw, text, x, y, size, center_x=False, center_y=False, rev_x=False, rev_y=False):
+    """
+    Draw text on an image with flexible positioning options.
+    
+    Args:
+        draw: ImageDraw object to draw on
+        text: Text string to render
+        x, y: Base coordinates for text placement
+        size: Font size in points
+        center_x: Center text horizontally
+        center_y: Center text vertically
+        rev_x: Calculate x from right edge instead of left
+        rev_y: Calculate y from bottom edge instead of top
+    
+    Returns:
+        Tuple of (width, height) of the rendered text
+    """
     font = ImageFont.truetype('assets/montserrat-bold.ttf', size)
     img_width, img_height = draw.im.size
-    width, height = draw.textsize(text, font=font)
+    
+    # Get text dimensions using textbbox (Pillow 10.0.0+)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+
+    # Apply positioning options
     if center_x:
         x += (img_width - width) // 2
     if center_y:
@@ -30,42 +66,95 @@ def draw_text(draw, text, x, y, size, center_x=False, center_y=False, rev_x=Fals
         x = img_width - width - x
     if rev_y:
         y = img_height - height - y
+    
     draw.text((x, y), text, fill='black', font=font)
-    return (width, height)
+    return width, height
 def make_jpg(prod, jpg_path):
-    aspect_ratio = 1.45
-    img_width = 580
-    img_height = int(img_width / aspect_ratio)
-    img = Image.new('RGB', (img_width, img_height), color='white')
+    """
+    Generate a product label image with barcode, price, and product details.
+    
+    Args:
+        prod: Product dictionary containing title, prod_id, sale_price, size, link
+        jpg_path: Output path for the generated label image
+    """
+    # Label dimensions
+    ASPECT_RATIO = 1.45
+    IMG_WIDTH = 580
+    IMG_HEIGHT = int(IMG_WIDTH / ASPECT_RATIO)
+    
+    # Padding constants
+    TOP_PAD = 20
+    LEFT_PAD = 20
+    RIGHT_PAD = 20
+    TITLE_WRAP_WIDTH = 33
+    
+    # Create blank white canvas
+    img = Image.new('RGB', (IMG_WIDTH, IMG_HEIGHT), color='white')
     draw = ImageDraw.Draw(img)
-    top_pad = 20
-    left_pad = 20
-    right_pad = 20
-    wrap = 33
+    
+    # Add logo in top-right corner
     logo = read_image('assets/logo.png', resize=60)
-    img.paste(im=logo, box=(img_width - logo.width - right_pad, top_pad), mask=logo)
-    code128 = Code128(str(prod['prod_id']), writer=ImageWriter())
-    code_img = code128.render(text='', writer_options={'module_height': 4, 'module_width': 0.57, 'quiet_zone': 1})
-    code_width, code_height = code_img.size
-    code_height -= 15
-    img.paste(code_img, ((img_width - code_width) // 2, img_height - code_height - 5))
-    _, id_height = draw_text(draw, str(prod['prod_id']), 0, code_height, 18, center_x=True, rev_y=True)
-    amd = read_image('assets/amd.png', resize=25)
-    amd_width, amd_height = amd.size
-    p = prod['sale_price']
-    p_size = 165 if len(p) <= 5 else 138 if len(p) == 6 else 115
-    price_width, price_height = draw_text(draw, p, -amd_width // 2, code_height + id_height + 3, p_size, center_x=True, rev_y=True)
-    img.paste(im=amd, box=((img_width + price_width - amd_width) // 2, img_height - code_height - id_height - amd_height - 15), mask=amd)
+    img.paste(logo, (IMG_WIDTH - logo.width - RIGHT_PAD, TOP_PAD), mask=logo)
+    
+    # Generate and place barcode at bottom center
+    barcode = Code128(str(prod['prod_id']), writer=ImageWriter())
+    barcode_img = barcode.render(
+        text='',
+        writer_options={'module_height': 3, 'module_width': 0.57, 'quiet_zone': 1}
+    )
+    barcode_width, barcode_height = barcode_img.size
+    barcode_height -= 10  # Adjust for better fit
+    img.paste(barcode_img, ((IMG_WIDTH - barcode_width) // 2, IMG_HEIGHT - barcode_height))
+    
+    PROD_ID_SIZE = 40
+    # Draw product ID below barcode
+    _, id_height = draw_text(
+        draw, str(prod['prod_id']), 0, barcode_height + (PROD_ID_SIZE//40)*2, PROD_ID_SIZE,
+        center_x=True, rev_y=True
+    )
+    
+    # Add currency symbol (AMD) next to price
+    currency_symbol = read_image('assets/amd.png', resize=25)
+    symbol_width, symbol_height = currency_symbol.size
+    
+    # Draw price with dynamic sizing based on length
+    price = prod['sale_price']
+    if len(price) <= 5:
+        price_size = 165
+    elif len(price) == 6:
+        price_size = 138
+    else:
+        price_size = 115
+    price_width, price_height = draw_text(
+        draw, price, -symbol_width // 2, barcode_height + id_height + 30, price_size,
+        center_x=True, rev_y=True
+    )
+    
+    # Place currency symbol next to price
+    symbol_x = (IMG_WIDTH + price_width - symbol_width) // 2
+    symbol_y = IMG_HEIGHT - barcode_height - id_height - symbol_height - 25
+    img.paste(currency_symbol, (symbol_x, symbol_y), mask=currency_symbol)
+    
+    # Draw product size if available
     size_height = 0
-    if prod['size'].strip()!= '':
-        _, size_height = draw_text(draw, f"Size: {prod['size']}", left_pad, top_pad, 32)
-    sum_height = 5
-    wrapped = textwrap.wrap(prod['title'], width=wrap)
-    if not wrapped:
-        wrapped.append('')
-    for line in wrapped:
-        _, title_height = draw_text(draw, line, left_pad, top_pad + size_height + sum_height, 24)
-        sum_height += title_height
+    if prod['size'].strip():
+        _, size_height = draw_text(draw, f"Size: {prod['size']}", LEFT_PAD, TOP_PAD, 32)
+    
+    # Draw product title with text wrapping
+    title_offset = 5
+    wrapped_lines = textwrap.wrap(prod['title'], width=TITLE_WRAP_WIDTH)
+    if not wrapped_lines:
+        wrapped_lines = ['']
+    
+    for line in wrapped_lines:
+        _, line_height = draw_text(
+            draw, line, LEFT_PAD, TOP_PAD + size_height + title_offset, 24
+        )
+        title_offset += line_height
+    
+    # Save the generated label
     img.save(jpg_path)
+    
+    # Log printed product to CSV
     with open('written.csv', 'a') as f:
-        f.write(f"{prod['prod_id']},{prod['title']} , {prod['link']}\n")
+        f.write(f"{prod['prod_id']},{prod['title']},{prod['link']}\n")
